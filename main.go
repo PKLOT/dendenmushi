@@ -27,17 +27,6 @@ func main() {
 		log.Println("Line Bot: OK")
 	}
 	slackBot = slack.New(cfg.SlackToken, slack.OptionDebug(true))
-	params := slack.GetConversationsParameters{}
-
-	groups, _, err := slackBot.GetConversations(&params)
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return
-	}
-	for _, group := range groups {
-		fmt.Printf("ID: %s, Name: %s\n", group.ID, group.Name)
-	}
-
 	// Echo instance
 	e := echo.New()
 
@@ -49,13 +38,14 @@ func main() {
 	e.GET("/", hello)
 	e.POST("line_callback", lineCallbackHandler)
 	// Start server
-	e.Logger.Fatal(e.Start(":3000"))
+	e.Logger.Fatal(e.Start(":3210"))
 }
 
 // Handler
 func hello(c echo.Context) error {
-	return c.String(http.StatusOK, "Hello, World!")
+	return c.String(http.StatusOK, "hi")
 }
+
 func lineCallbackHandler(c echo.Context) error {
 	events, err := lineBot.ParseRequest(c.Request())
 	if err != nil {
@@ -66,86 +56,134 @@ func lineCallbackHandler(c echo.Context) error {
 		}
 	}
 	for _, event := range events {
-		userID := event.Source.UserID
-		groupID := event.Source.GroupID
-		sender, _ := lineBot.GetGroupMemberProfile(groupID, userID).Do()
-		group, _ := lineBot.GetGroupSummary(groupID).Do()
-		senderName := "[" + group.GroupName + "] " + sender.DisplayName + ":"
-		if event.Type == linebot.EventTypeMessage {
-			switch message := event.Message.(type) {
-			default:
-				log.Printf("%+v", message)
-			}
-			switch message := event.Message.(type) {
-			case *linebot.TextMessage:
-				_, _, err = slackBot.PostMessage(
-					slackChannelId,
-					slack.MsgOptionText(senderName+"\n"+message.Text, false),
-					slack.MsgOptionAsUser(true), // Add this if you want that the bot would post message as a user, otherwise it will send response using the default slackbot
-				)
-				if err != nil {
-					log.Print(err)
-				}
-
-			case *linebot.StickerMessage:
-				url := fmt.Sprintf("https://stickershop.line-scdn.net/stickershop/v1/sticker/%s/android/sticker.png", message.StickerID)
-				attachment := slack.Attachment{}
-				attachment.Text = "[" + group.GroupName + "] " + sender.DisplayName + ":"
-				attachment.ImageURL = url
-				_, _, err = slackBot.PostMessage(
-					slackChannelId,
-					slack.MsgOptionAttachments(attachment),
-					slack.MsgOptionAsUser(true), // Add this if you want that the bot would post message as a user, otherwise it will send response using the default slackbot
-				)
-				if err != nil {
-					log.Print(err)
-				}
-			case *linebot.ImageMessage:
-				content, err := lineBot.GetMessageContent(message.ID).Do()
-				if err != nil {
-					log.Print(err)
-				}
-				defer content.Content.Close()
-				var contentData = make([]byte, 1024*1024) //1MB
-				_, err = content.Content.Read(contentData)
-				if err != nil {
-					log.Print(err)
-				}
-				file := slack.FileUploadParameters{
-					InitialComment: senderName,
-					Content:        string(contentData),
-					Channels:       []string{slackChannelId},
-				}
-				_, err = slackBot.UploadFile(file)
-				if err != nil {
-					log.Print(err)
-				}
-			case *linebot.FileMessage:
-				content, err := lineBot.GetMessageContent(message.ID).Do()
-				if err != nil {
-					log.Print(err)
-				}
-				defer content.Content.Close()
-				var contentData = make([]byte, content.ContentLength)
-				_, err = content.Content.Read(contentData)
-				if err != nil {
-					log.Print(err)
-				}
-				file := slack.FileUploadParameters{
-					Filename:       message.FileName,
-					Filetype:       content.ContentType,
-					InitialComment: senderName,
-					Content:        string(contentData),
-					Channels:       []string{slackChannelId},
-				}
-				_, err = slackBot.UploadFile(file)
-				if err != nil {
-					log.Print(err)
-				}
-			}
-
-		}
+		go lineEventHandler(event)
 	}
 
 	return c.String(http.StatusOK, "ok")
+}
+
+func lineEventHandler(event *linebot.Event) {
+	userID := event.Source.UserID
+	groupID := event.Source.GroupID
+	sender, _ := lineBot.GetGroupMemberProfile(groupID, userID).Do()
+	group, _ := lineBot.GetGroupSummary(groupID).Do()
+	senderName := "[" + group.GroupName + "] " + sender.DisplayName + ":"
+	var err error
+	if event.Type == linebot.EventTypeMessage {
+		switch message := event.Message.(type) {
+		default:
+			log.Printf("%+v", message)
+		}
+		switch message := event.Message.(type) {
+		case *linebot.TextMessage:
+			_, _, err = slackBot.PostMessage(
+				slackChannelId,
+				slack.MsgOptionText(senderName+"\n"+message.Text, false),
+				slack.MsgOptionAsUser(true), // Add this if you want that the bot would post message as a user, otherwise it will send response using the default slackbot
+			)
+			if err != nil {
+				log.Print(err)
+			}
+
+		case *linebot.StickerMessage:
+			url := fmt.Sprintf("https://stickershop.line-scdn.net/stickershop/v1/sticker/%s/android/sticker.png", message.StickerID)
+			attachment := slack.Attachment{}
+			attachment.Text = "[" + group.GroupName + "] " + sender.DisplayName + ":"
+			attachment.ImageURL = url
+			_, _, err = slackBot.PostMessage(
+				slackChannelId,
+				slack.MsgOptionAttachments(attachment),
+				slack.MsgOptionAsUser(true), // Add this if you want that the bot would post message as a user, otherwise it will send response using the default slackbot
+			)
+			if err != nil {
+				log.Print(err)
+			}
+		case *linebot.ImageMessage:
+			content, err := lineBot.GetMessageContent(message.ID).Do()
+			if err != nil {
+				log.Print(err)
+			}
+			defer content.Content.Close()
+			var contentData = make([]byte, 1024*1024) //1MB
+			_, err = content.Content.Read(contentData)
+			if err != nil {
+				log.Print(err)
+			}
+			file := slack.FileUploadParameters{
+				InitialComment: senderName,
+				Content:        string(contentData),
+				Channels:       []string{slackChannelId},
+			}
+			_, err = slackBot.UploadFile(file)
+			if err != nil {
+				log.Print(err)
+			}
+
+		case *linebot.AudioMessage:
+			content, err := lineBot.GetMessageContent(message.ID).Do()
+			if err != nil {
+				log.Print(err)
+			}
+			defer content.Content.Close()
+			var contentData = make([]byte, 10*1024*1024) //10MB
+			_, err = content.Content.Read(contentData)
+			if err != nil {
+				log.Print(err)
+			}
+			file := slack.FileUploadParameters{
+				InitialComment: senderName,
+				Content:        string(contentData),
+				Channels:       []string{slackChannelId},
+			}
+			_, err = slackBot.UploadFile(file)
+			if err != nil {
+				log.Print(err)
+			}
+		case *linebot.VideoMessage:
+			content, err := lineBot.GetMessageContent(message.ID).Do()
+			if err != nil {
+				log.Print(err)
+			}
+			defer content.Content.Close()
+			var contentData = make([]byte, 300*1024*1024) //300MB
+			_, err = content.Content.Read(contentData)
+			if err != nil {
+				log.Print(err)
+			}
+			file := slack.FileUploadParameters{
+				InitialComment: senderName,
+				Content:        string(contentData),
+				Channels:       []string{slackChannelId},
+			}
+			_, err = slackBot.UploadFile(file)
+			if err != nil {
+				log.Print(err)
+			}
+
+		case *linebot.FileMessage:
+			content, err := lineBot.GetMessageContent(message.ID).Do()
+			if err != nil {
+				log.Print(err)
+			}
+			defer content.Content.Close()
+			var contentData = make([]byte, content.ContentLength)
+			_, err = content.Content.Read(contentData)
+			if err != nil {
+				log.Print(err)
+			}
+			file := slack.FileUploadParameters{
+				Filename:       message.FileName,
+				Filetype:       content.ContentType,
+				InitialComment: senderName,
+				Content:        string(contentData),
+				Channels:       []string{slackChannelId},
+			}
+			_, err = slackBot.UploadFile(file)
+			if err != nil {
+				log.Print(err)
+			}
+		}
+
+	}
+
 }
